@@ -14,7 +14,7 @@ Any Prime POS store can use it: install the app, sign in with your own store acc
 - Menu CSV export downloads, photo upload
 
 ## Install
-1. Open **Releases** on this repository and download the latest `PrimePOS-*.apk` on the tablet.
+1. Open **Actions** on this repository → the latest green **Android CI** run → **Artifacts** → download **PrimePOS-debug-apk** (unzip it to get the `.apk`).
 2. Allow "Install unknown apps" for the browser when Android asks, then install.
 3. Open Prime POS and sign in.
 
@@ -27,17 +27,6 @@ The tablet must be on the same Wi‑Fi/LAN as the printers. Give the printers fi
 Turn off battery optimisation for Prime POS (Settings → Apps → Prime POS → Battery → Unrestricted) so printing never pauses.
 
 ## Build
-GitHub Actions (`.github/workflows/build.yml`) builds a release APK on every push to `main` and publishes it as a release `v1.0.<run>`.
-
-Optional signing (recommended, so updates install over the old version). Add repository secrets:
-
-| Secret | Value |
-|---|---|
-| `SIGNING_KEYSTORE_BASE64` | `base64 -w0 release.jks` |
-| `SIGNING_STORE_PASSWORD` | keystore password |
-| `SIGNING_KEY_ALIAS` | key alias |
-| `SIGNING_KEY_PASSWORD` | key password |
-
-Without them the APK is signed with a debug key.
+GitHub Actions (`.github/workflows/android.yml`) builds a debug APK on every push to `main` and attaches it to the run as the artifact **PrimePOS-debug-apk**.
 
 Local build: Android Studio (JDK 17, SDK 34) → open the folder → Run.
