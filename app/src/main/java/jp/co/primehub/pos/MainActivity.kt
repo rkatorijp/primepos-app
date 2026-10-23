@@ -15,6 +15,8 @@ import android.os.Vibrator
 import android.os.VibratorManager
 import android.view.WindowManager
 import android.webkit.CookieManager
+import android.webkit.JsPromptResult
+import android.webkit.JsResult
 import android.webkit.JavascriptInterface
 import android.webkit.URLUtil
 import android.webkit.ValueCallback
@@ -23,7 +25,11 @@ import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
+import androidx.lifecycle.Lifecycle
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
@@ -93,6 +99,28 @@ class MainActivity : AppCompatActivity() {
                 fileCallback = cb
                 return try { pickFile.launch(params.createIntent()); true } catch (_: Exception) { fileCallback = null; false }
             }
+            // page alert / confirm / prompt: our own dialog, without the "The page at https://… says:" title
+            override fun onJsAlert(view: WebView, url: String?, message: String?, result: JsResult): Boolean {
+                AlertDialog.Builder(this@MainActivity).setMessage(message).setCancelable(false)
+                    .setPositiveButton("OK") { _, _ -> result.confirm() }.show()
+                return true
+            }
+            override fun onJsConfirm(view: WebView, url: String?, message: String?, result: JsResult): Boolean {
+                AlertDialog.Builder(this@MainActivity).setMessage(message)
+                    .setPositiveButton("OK") { _, _ -> result.confirm() }
+                    .setNegativeButton("キャンセル Cancel") { _, _ -> result.cancel() }
+                    .setOnCancelListener { result.cancel() }.show()
+                return true
+            }
+            override fun onJsPrompt(view: WebView, url: String?, message: String?, defaultValue: String?, result: JsPromptResult): Boolean {
+                val input = EditText(this@MainActivity).apply { setText(defaultValue ?: ""); setSingleLine(); selectAll() }
+                val box = FrameLayout(this@MainActivity).apply { val pad = (20 * resources.displayMetrics.density).toInt(); setPadding(pad, 0, pad, 0); addView(input) }
+                AlertDialog.Builder(this@MainActivity).setMessage(message).setView(box)
+                    .setPositiveButton("OK") { _, _ -> result.confirm(input.text.toString()) }
+                    .setNegativeButton("キャンセル Cancel") { _, _ -> result.cancel() }
+                    .setOnCancelListener { result.cancel() }.show()
+                return true
+            }
         }
         web.setDownloadListener { url, ua, cd, mime, _ ->   // e.g. menu CSV export
             try {
@@ -120,7 +148,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onSaveInstanceState(outState: Bundle) { super.onSaveInstanceState(outState); web.saveState(outState) }
-    override fun onPause() { super.onPause(); CookieManager.getInstance().flush() }
+    override fun onPause() { super.onPause(); CookieManager.getInstance().flush(); shown?.cancel() }
 
     private fun showOffline(failed: String) {
         val html = """
@@ -132,7 +160,30 @@ class MainActivity : AppCompatActivity() {
         web.loadDataWithBaseURL(null, html, "text/html", "utf-8", failed)
     }
 
-    private fun toast(s: String) = runOnUiThread { Toast.makeText(this, s, Toast.LENGTH_LONG).show() }
+    // one message at a time: a new one replaces the old one, the same error is not repeated for 60 s,
+    // and nothing is left on screen when the app goes to the background
+    private var shown: Toast? = null
+    private var lastMsg = ""
+    private var lastAt = 0L
+    private fun toast(s: String, quiet: Boolean = false) = runOnUiThread {
+        val now = System.currentTimeMillis()
+        if (quiet && s == lastMsg && now - lastAt < 60000) return@runOnUiThread
+        if (quiet && !lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) return@runOnUiThread   // app in the background: say nothing
+        lastMsg = s; lastAt = now
+        shown?.cancel()
+        shown = Toast.makeText(this, s, if (quiet) Toast.LENGTH_SHORT else Toast.LENGTH_LONG).also { it.show() }
+    }
+
+    /** short, readable printer error (no Java exception text) */
+    private fun printerError(e: Exception): String {
+        val m = (e.message ?: "") + " " + (e.cause?.message ?: "")
+        return when {
+            m.contains("ENETUNREACH") || m.contains("Network is unreachable") -> "Wi-Fiにつながっていません · Not connected to the shop Wi-Fi"
+            m.contains("EHOSTUNREACH") || m.contains("timed out", true) || m.contains("after ") -> "プリンターが見つかりません · Printer not found (power / Wi-Fi?)"
+            m.contains("ECONNREFUSED") -> "プリンターが応答しません · Printer refused the connection"
+            else -> "プリンターエラー · Printer error"
+        }
+    }
 
     /** window.PrimePOSApp in the page (only answers on Prime POS pages) */
     inner class Bridge {
@@ -168,7 +219,7 @@ class MainActivity : AppCompatActivity() {
                     try {
                         EscPos.send(p.getString("ip"), p.optInt("port", 9100), EscPos.render(EscPos.testTicket(name, p.optInt("width", 48)), Prefs.kanji(this@MainActivity)))
                         toast("✓ $name")
-                    } catch (e: Exception) { toast("⚠ $name (${p.optString("ip")}): ${e.message}") }
+                    } catch (e: Exception) { toast("⚠ $name (${p.optString("ip")}): ${printerError(e)}") }
                 }
             }.start()
         }
@@ -179,7 +230,7 @@ class MainActivity : AppCompatActivity() {
             if (!ok()) return "not allowed"
             return try {
                 EscPos.send(ip, if (port > 0) port else 9100, EscPos.render(text, Prefs.kanji(this@MainActivity)), copies, 4000); ""
-            } catch (e: Exception) { e.message ?: "print error" }
+            } catch (e: Exception) { printerError(e) }
         }
 
         /** vibrate for a new QR order or a call. pattern: "on,off,on,..." in ms */
@@ -200,7 +251,7 @@ class MainActivity : AppCompatActivity() {
         /** open the cash drawer on a printer right now */
         @JavascriptInterface fun openDrawer(ip: String, port: Int) {
             if (!ok()) return
-            Thread { try { EscPos.send(ip, if (port > 0) port else 9100, EscPos.drawerKick()) } catch (e: Exception) { toast("⚠ $ip: ${e.message}") } }.start()
+            Thread { try { EscPos.send(ip, if (port > 0) port else 9100, EscPos.drawerKick(), 1, 3000) } catch (e: Exception) { toast("⚠ ドロア Drawer: " + printerError(e), quiet = true) } }.start()
         }
     }
 }
