@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Prime POS</string>
+    <string name="print_title">Prime POS 印刷</string>
+    <string name="print_waiting">注文を待っています · Waiting for orders</string>
+    <string name="print_offline_prefix">サーバーに接続できません</string>
+    <string name="print_failed">印刷できません</string>
+    <string name="print_bad_key">接続が無効です。管理画面 → プリンター で接続し直してください</string>
+</resources>
