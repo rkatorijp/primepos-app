@@ -25,6 +25,7 @@ object EscPos {
 
     fun render(text: String, kanji: Boolean = true, cut: Boolean = true): ByteArray {
         val out = ByteArrayOutputStream()
+        var printed = false   // a job with only [[DRAWER]] opens the drawer without feeding or cutting blank paper
         out.write(byteArrayOf(ESC, 0x40))                                        // initialise
         if (kanji) out.write(byteArrayOf(FS, 0x26, FS, 0x43, 0x01))              // Kanji mode on, Shift-JIS
         for (raw in text.replace("\r\n", "\n").trimEnd('\n').split("\n")) {
@@ -42,11 +43,12 @@ object EscPos {
             if (bold) out.write(byteArrayOf(ESC, 0x45, 0x01))
             out.write(encode(line, kanji))
             out.write(0x0A)
+            printed = true
             if (center) out.write(byteArrayOf(ESC, 0x61, 0x00))
             if (big) out.write(byteArrayOf(GS, 0x21, 0x00))
             if (bold) out.write(byteArrayOf(ESC, 0x45, 0x00))
         }
-        if (cut) out.write(byteArrayOf(ESC, 0x64, 0x04, GS, 0x56, 0x42, 0x00))    // feed 4 lines, partial cut
+        if (cut && printed) out.write(byteArrayOf(ESC, 0x64, 0x04, GS, 0x56, 0x42, 0x00))    // feed 4 lines, partial cut
         return out.toByteArray()
     }
 
