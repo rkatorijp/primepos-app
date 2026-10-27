@@ -25,20 +25,31 @@ jobs:
       - name: Decode upload keystore
         env:
           KEYSTORE_B64: ${{ secrets.PRIMEPOS_KEYSTORE_B64 }}
-        run: echo "$KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/primepos-upload.jks"
+        run: |
+          test -n "$KEYSTORE_B64"
+          echo "$KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/primepos-upload.jks"
 
-      - name: Build signed release AAB
+      - name: Verify signing secrets
         env:
-          KEYSTORE_PATH: ${{ runner.temp }}/primepos-upload.jks
-          KEYSTORE_PASSWORD: ${{ secrets.PRIMEPOS_KEYSTORE_PASSWORD }}
+          STORE_PASSWORD: ${{ secrets.PRIMEPOS_KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.PRIMEPOS_KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.PRIMEPOS_KEY_PASSWORD }}
         run: |
-          gradle --no-daemon bundleRelease \
-            -Pandroid.injected.signing.store.file="$KEYSTORE_PATH" \
-            -Pandroid.injected.signing.store.password="$KEYSTORE_PASSWORD" \
-            -Pandroid.injected.signing.key.alias="$KEY_ALIAS" \
-            -Pandroid.injected.signing.key.password="$KEY_PASSWORD"
+          test -n "$STORE_PASSWORD"
+          test -n "$KEY_ALIAS"
+          test -n "$KEY_PASSWORD"
+
+      - name: Build signed release AAB
+        env:
+          SIGNING_KEYSTORE_FILE: ${{ runner.temp }}/primepos-upload.jks
+          SIGNING_STORE_PASSWORD: ${{ secrets.PRIMEPOS_KEYSTORE_PASSWORD }}
+          SIGNING_KEY_ALIAS: ${{ secrets.PRIMEPOS_KEY_ALIAS }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.PRIMEPOS_KEY_PASSWORD }}
+        run: gradle --no-daemon bundleRelease
+
+      - name: Verify AAB is signed
+        run: |
+          jarsigner -verify -verbose -certs app/build/outputs/bundle/release/*.aab | tail -n 5
 
       - name: Upload signed AAB
         uses: actions/upload-artifact@v5
