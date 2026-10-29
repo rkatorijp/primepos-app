@@ -11,7 +11,7 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "prime.pos"   // must match the app in Play Console
+        applicationId = "jp.co.primehub.pos"
         minSdk = 24
         targetSdk = 36
         versionCode = run
