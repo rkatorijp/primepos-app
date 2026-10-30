@@ -41,7 +41,7 @@ import org.json.JSONArray
 
 /**
  * Prime POS for Android: the normal Prime POS screens (any store can sign in) plus
- * direct printing to network printers (ESC/POS, port 9100) and the cash drawer.
+ * direct printing to network printers (Wi-Fi / LAN, ESC/POS port 9100) and paired Bluetooth printers, and the cash drawer.
  */
 class MainActivity : AppCompatActivity() {
 
@@ -178,6 +178,10 @@ class MainActivity : AppCompatActivity() {
             val r = camRequest; camRequest = null
             if (r != null) { if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) r.grant(arrayOf(PermissionRequest.RESOURCE_VIDEO_CAPTURE)) else r.deny() }
         }
+        if (requestCode == 3) {   // Bluetooth (Nearby devices) for Bluetooth printers: tell the printer settings page
+            val g = grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED
+            if (pageHost == HOST) web.evaluateJavascript("window.ppBtReady && window.ppBtReady($g)", null)
+        }
     }
     override fun onSaveInstanceState(outState: Bundle) { super.onSaveInstanceState(outState); web.saveState(outState) }
     override fun onPause() { super.onPause(); CookieManager.getInstance().flush(); shown?.cancel() }
@@ -208,6 +212,7 @@ class MainActivity : AppCompatActivity() {
 
     /** short, readable printer error (no Java exception text) */
     private fun printerError(e: Exception): String {
+        BtPrinter.reason(e)?.let { return it }
         val m = (e.message ?: "") + " " + (e.cause?.message ?: "")
         return when {
             m.contains("ENETUNREACH") || m.contains("Network is unreachable") -> "Wi-Fiにつながっていません · Not connected to the shop Wi-Fi"
@@ -249,9 +254,9 @@ class MainActivity : AppCompatActivity() {
                     val p = arr.getJSONObject(i)
                     val name = p.optString("name", "Printer")
                     try {
-                        EscPos.send(p.getString("ip"), p.optInt("port", 9100), EscPos.render(EscPos.testTicket(name, p.optInt("width", 48)), Prefs.kanji(this@MainActivity)))
+                        EscPos.send(this@MainActivity, p.getString("ip"), p.optInt("port", 9100), EscPos.render(EscPos.testTicket(name, p.optInt("width", 48)), Prefs.kanji(this@MainActivity)))
                         toast("✓ $name")
-                    } catch (e: Exception) { toast("⚠ $name (${p.optString("ip")}): ${printerError(e)}") }
+                    } catch (e: Exception) { toast("⚠ $name: ${printerError(e)}") }
                 }
             }.start()
         }
@@ -261,8 +266,23 @@ class MainActivity : AppCompatActivity() {
         @JavascriptInterface fun printText(ip: String, port: Int, text: String, copies: Int): String {
             if (!ok()) return "not allowed"
             return try {
-                EscPos.send(ip, if (port > 0) port else 9100, EscPos.render(text, Prefs.kanji(this@MainActivity)), copies, 4000); ""
+                EscPos.send(this@MainActivity, ip, port, EscPos.render(text, Prefs.kanji(this@MainActivity)), copies, 4000); ""
             } catch (e: Exception) { printerError(e) }
+        }
+
+        /** Bluetooth printers paired with this tablet (Android Settings → Bluetooth), for the printer settings.
+         *  Returns {"devices":[{name, mac, printer}]} or {"error":"permission"|"off"|"none"}; "permission" also asks Android for it,
+         *  and the page is told with window.ppBtReady(granted) when the user answers. */
+        @JavascriptInterface fun btList(): String {
+            if (!ok()) return "{\"error\":\"none\"}"
+            val r = BtPrinter.paired(this@MainActivity)
+            if (r.contains("\"permission\"") && Build.VERSION.SDK_INT >= 31) runOnUiThread { requestPermissions(arrayOf(Manifest.permission.BLUETOOTH_CONNECT), 3) }
+            return r
+        }
+        /** open Android's Bluetooth settings to pair a printer */
+        @JavascriptInterface fun btSettings() {
+            if (!ok()) return
+            runOnUiThread { try { startActivity(Intent(android.provider.Settings.ACTION_BLUETOOTH_SETTINGS)) } catch (_: Exception) {} }
         }
 
         /** vibrate for a new QR order or a call. pattern: "on,off,on,..." in ms */
@@ -283,7 +303,7 @@ class MainActivity : AppCompatActivity() {
         /** open the cash drawer on a printer right now */
         @JavascriptInterface fun openDrawer(ip: String, port: Int) {
             if (!ok()) return
-            Thread { try { EscPos.send(ip, if (port > 0) port else 9100, EscPos.drawerKick(), 1, 3000) } catch (e: Exception) { toast("⚠ ドロア Drawer: " + printerError(e), quiet = true) } }.start()
+            Thread { try { EscPos.send(this@MainActivity, ip, port, EscPos.drawerKick(), 1, 3000) } catch (e: Exception) { toast("⚠ ドロア Drawer: " + printerError(e), quiet = true) } }.start()
         }
     }
 }

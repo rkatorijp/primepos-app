@@ -1,5 +1,6 @@
 package jp.co.primehub.pos
 
+import android.content.Context
 import java.io.ByteArrayOutputStream
 import java.net.InetSocketAddress
 import java.net.Socket
@@ -61,8 +62,13 @@ object EscPos {
         return if (kanji) t.toByteArray(SJIS) else t.toByteArray(Charsets.US_ASCII)
     }
 
+    /** send bytes to a printer: "bt:AA:BB:…" = paired Bluetooth printer, anything else = network printer (Wi-Fi / LAN, raw port 9100) */
+    fun send(c: Context, address: String, port: Int, data: ByteArray, copies: Int = 1, timeoutMs: Int = 5000) =
+        if (BtPrinter.isBt(address)) BtPrinter.send(c, address, data, copies, maxOf(timeoutMs, 8000))
+        else sendNet(address, if (port > 0) port else 9100, data, copies, timeoutMs)
+
     /** send bytes to a network printer (raw port 9100). Throws on any network error. */
-    fun send(ip: String, port: Int, data: ByteArray, copies: Int = 1, timeoutMs: Int = 5000) {
+    fun sendNet(ip: String, port: Int, data: ByteArray, copies: Int = 1, timeoutMs: Int = 5000) {
         Socket().use { s ->
             s.connect(InetSocketAddress(ip, port), timeoutMs)
             s.soTimeout = timeoutMs

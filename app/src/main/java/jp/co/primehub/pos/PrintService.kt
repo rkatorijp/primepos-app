@@ -108,14 +108,14 @@ class PrintService : Service() {
         val p = job.getJSONObject("printer")
         val name = p.optString("name", "Printer"); val ip = p.getString("ip"); val port = p.optInt("port", 9100)
         try {
-            EscPos.send(ip, port, EscPos.render(job.optString("text", ""), Prefs.kanji(this)), p.optInt("copies", 1))
+            EscPos.send(this, ip, port, EscPos.render(job.optString("text", ""), Prefs.kanji(this)), p.optInt("copies", 1))
             http("$url?key=${enc(key)}&action=ack&id=$id")
             val t = SimpleDateFormat("HH:mm", Locale.JAPAN).format(Date())
             val table = job.optString("table", "")
             status("✓ $t  $name" + (if (table.isNotEmpty() && table != "null") "  ·  T$table" else ""))
         } catch (e: Exception) {
             try { http("$url?key=${enc(key)}&action=fail&id=$id") } catch (_: Exception) {}
-            status("⚠ $name ($ip) " + getString(R.string.print_failed) + ": " + (e.message ?: ""))
+            status("⚠ $name " + (if (BtPrinter.isBt(ip)) "(Bluetooth) " else "($ip) ") + getString(R.string.print_failed) + ": " + (BtPrinter.reason(e) ?: e.message ?: ""))
         }
     }
 
