@@ -18,6 +18,7 @@ import android.webkit.CookieManager
 import android.webkit.JsPromptResult
 import android.webkit.JsResult
 import android.webkit.JavascriptInterface
+import android.webkit.PermissionRequest
 import android.webkit.URLUtil
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
@@ -52,6 +53,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var web: WebView
     @Volatile private var pageHost: String = ""
     private var fileCallback: ValueCallback<Array<Uri>>? = null
+    private var camRequest: PermissionRequest? = null   // the page asked for the camera (barcode / QR scanner) while Android asks the user
 
     private val pickFile = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
         fileCallback?.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(r.resultCode, r.data))
@@ -107,6 +109,16 @@ class MainActivity : AppCompatActivity() {
             }
         }
         web.webChromeClient = object : WebChromeClient() {
+            // camera for the barcode / QR scanner on the POS — only for Prime POS pages
+            override fun onPermissionRequest(request: PermissionRequest) {
+                runOnUiThread {
+                    val ours = request.origin?.host == HOST
+                    val cam = request.resources.contains(PermissionRequest.RESOURCE_VIDEO_CAPTURE)
+                    if (!ours || !cam) { request.deny(); return@runOnUiThread }
+                    if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) request.grant(arrayOf(PermissionRequest.RESOURCE_VIDEO_CAPTURE))
+                    else { camRequest = request; requestPermissions(arrayOf(Manifest.permission.CAMERA), 2) }
+                }
+            }
             override fun onShowFileChooser(view: WebView, cb: ValueCallback<Array<Uri>>, params: FileChooserParams): Boolean {
                 fileCallback?.onReceiveValue(null)
                 fileCallback = cb
@@ -160,6 +172,13 @@ class MainActivity : AppCompatActivity() {
         else web.loadUrl(getPreferences(MODE_PRIVATE).getString("last", null) ?: HOME)
     }
 
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 2) {
+            val r = camRequest; camRequest = null
+            if (r != null) { if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) r.grant(arrayOf(PermissionRequest.RESOURCE_VIDEO_CAPTURE)) else r.deny() }
+        }
+    }
     override fun onSaveInstanceState(outState: Bundle) { super.onSaveInstanceState(outState); web.saveState(outState) }
     override fun onPause() { super.onPause(); CookieManager.getInstance().flush(); shown?.cancel() }
 
