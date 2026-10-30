@@ -54,6 +54,7 @@ class MainActivity : AppCompatActivity() {
     @Volatile private var pageHost: String = ""
     private var fileCallback: ValueCallback<Array<Uri>>? = null
     private var camRequest: PermissionRequest? = null   // the page asked for the camera (barcode / QR scanner) while Android asks the user
+    private var printView: WebView? = null   // kept until Android's print screen has the page (barcode labels)
 
     private val pickFile = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
         fileCallback?.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(r.resultCode, r.data))
@@ -278,6 +279,23 @@ class MainActivity : AppCompatActivity() {
             val r = BtPrinter.paired(this@MainActivity)
             if (r.contains("\"permission\"") && Build.VERSION.SDK_INT >= 31) runOnUiThread { requestPermissions(arrayOf(Manifest.permission.BLUETOOTH_CONNECT), 3) }
             return r
+        }
+        /** print a page (barcode label sheets) with Android's print screen: PDF, Wi-Fi printers, label printers with a print plugin */
+        @JavascriptInterface fun printHtml(html: String, title: String) {
+            if (!ok() || html.length > 5_000_000) return
+            runOnUiThread {
+                val w = WebView(this@MainActivity)
+                w.settings.javaScriptEnabled = false
+                w.webViewClient = object : WebViewClient() {
+                    override fun onPageFinished(view: WebView, url: String?) {
+                        val name = title.take(60).ifBlank { "Prime POS" }
+                        try { (getSystemService(PRINT_SERVICE) as android.print.PrintManager).print(name, view.createPrintDocumentAdapter(name), android.print.PrintAttributes.Builder().build()) }
+                        catch (e: Exception) { toast("⚠ " + (e.message ?: "print")) }
+                    }
+                }
+                printView = w
+                w.loadDataWithBaseURL("https://$HOST/", html, "text/html", "utf-8", null)
+            }
         }
         /** open Android's Bluetooth settings to pair a printer */
         @JavascriptInterface fun btSettings() {
