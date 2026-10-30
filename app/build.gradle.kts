@@ -3,22 +3,23 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
-// version from the CI run number, so every build installs over the previous one
+// Use the GitHub Actions run number for monotonically increasing build versions.
 val run = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInt()
 
 android {
     namespace = "jp.co.primehub.pos"
-    compileSdk = 34
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "jp.co.primehub.pos"
         minSdk = 24
-        targetSdk = 34
+        targetSdk = 36
         versionCode = run
         versionName = "1.0.$run"
     }
 
-    // release signing comes from GitHub secrets (see README); without them the build is signed with the debug key
+    // Release builds must be signed with a private upload key.
+    // Do not fall back to the debug key for Play Store releases.
     val ks = System.getenv("SIGNING_KEYSTORE_FILE")
     signingConfigs {
         if (ks != null) create("release") {
@@ -31,7 +32,7 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
-            signingConfig = if (ks != null) signingConfigs.getByName("release") else signingConfigs.getByName("debug")
+            if (ks != null) signingConfig = signingConfigs.getByName("release")
         }
     }
     compileOptions {

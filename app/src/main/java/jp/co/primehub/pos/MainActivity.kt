@@ -33,6 +33,9 @@ import androidx.lifecycle.Lifecycle
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import org.json.JSONArray
 
 /**
@@ -60,7 +63,17 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)   // a POS tablet stays on
         web = WebView(this)
-        setContentView(web)
+        // Android 15+ draws apps edge-to-edge: keep the page clear of the status bar, nav bar, notch and keyboard
+        val root = FrameLayout(this).apply { setBackgroundColor(getColor(R.color.green)) }
+        root.addView(web, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+        setContentView(root)
+        WindowCompat.setDecorFitsSystemWindows(window, false)   // same layout on every Android version
+        WindowCompat.getInsetsController(window, root).isAppearanceLightStatusBars = false   // white icons on green
+        ViewCompat.setOnApplyWindowInsetsListener(root) { v, insets ->
+            val b = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout() or WindowInsetsCompat.Type.ime())
+            v.setPadding(b.left, b.top, b.right, b.bottom)
+            WindowInsetsCompat.CONSUMED
+        }
 
         CookieManager.getInstance().setAcceptCookie(true)
         CookieManager.getInstance().setAcceptThirdPartyCookies(web, true)

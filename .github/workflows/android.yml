@@ -26,6 +26,17 @@ jobs:
           unzip -q /tmp/gradle.zip -d /tmp
           echo "/tmp/gradle-8.7/bin" >> "$GITHUB_PATH"
 
+      - name: Build release AAB
+        run: gradle --no-daemon bundleRelease
+
+      - name: Upload release AAB
+        uses: actions/upload-artifact@v5
+        with:
+          name: PrimePOS-release-aab
+          path: app/build/outputs/bundle/release/*.aab
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Build debug APK
         run: gradle --no-daemon assembleDebug
 

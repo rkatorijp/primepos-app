@@ -1,0 +1,60 @@
+name: Signed Android AAB
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          java-version: "17"
+          distribution: "temurin"
+
+      - name: Install Gradle 8.7
+        run: |
+          curl --fail --location --retry 3 https://services.gradle.org/distributions/gradle-8.7-bin.zip --output /tmp/gradle.zip
+          unzip -q /tmp/gradle.zip -d /tmp
+          echo "/tmp/gradle-8.7/bin" >> "$GITHUB_PATH"
+
+      - name: Decode upload keystore
+        env:
+          KEYSTORE_B64: ${{ secrets.PRIMEPOS_KEYSTORE_B64 }}
+        run: |
+          test -n "$KEYSTORE_B64"
+          echo "$KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/primepos-upload.jks"
+
+      - name: Verify signing secrets
+        env:
+          STORE_PASSWORD: ${{ secrets.PRIMEPOS_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.PRIMEPOS_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.PRIMEPOS_KEY_PASSWORD }}
+        run: |
+          test -n "$STORE_PASSWORD"
+          test -n "$KEY_ALIAS"
+          test -n "$KEY_PASSWORD"
+
+      - name: Build signed release AAB
+        env:
+          SIGNING_KEYSTORE_FILE: ${{ runner.temp }}/primepos-upload.jks
+          SIGNING_STORE_PASSWORD: ${{ secrets.PRIMEPOS_KEYSTORE_PASSWORD }}
+          SIGNING_KEY_ALIAS: ${{ secrets.PRIMEPOS_KEY_ALIAS }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.PRIMEPOS_KEY_PASSWORD }}
+        run: gradle --no-daemon bundleRelease
+
+      - name: Verify AAB is signed
+        run: |
+          jarsigner -verify -verbose -certs app/build/outputs/bundle/release/*.aab | tail -n 5
+
+      - name: Upload signed AAB
+        uses: actions/upload-artifact@v5
+        with:
+          name: PrimePOS-signed-release-aab
+          path: app/build/outputs/bundle/release/*.aab
+          if-no-files-found: error
+          retention-days: 14
