@@ -16,7 +16,6 @@ import androidx.core.app.NotificationCompat
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
-import java.net.URLEncoder
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -86,7 +85,7 @@ class PrintService : Service() {
             val url = Prefs.url(this); val key = Prefs.key(this)
             if (url.isEmpty() || key.isEmpty()) { stopSelf(); return }
             try {
-                val res = http("$url?key=${enc(key)}&action=pending")
+                val res = http("$url?action=pending", key)
                 val jobs = res.optJSONArray("jobs")
                 if (jobs != null && jobs.length() > 0) {
                     idle = 0
@@ -109,20 +108,22 @@ class PrintService : Service() {
         val name = p.optString("name", "Printer"); val ip = p.getString("ip"); val port = p.optInt("port", 9100)
         try {
             EscPos.send(this, ip, port, EscPos.render(job.optString("text", ""), Prefs.kanji(this)), p.optInt("copies", 1))
-            http("$url?key=${enc(key)}&action=ack&id=$id")
+            http("$url?action=ack&id=$id", key)
             val t = SimpleDateFormat("HH:mm", Locale.JAPAN).format(Date())
             val table = job.optString("table", "")
             status("✓ $t  $name" + (if (table.isNotEmpty() && table != "null") "  ·  T$table" else ""))
         } catch (e: Exception) {
-            try { http("$url?key=${enc(key)}&action=fail&id=$id") } catch (_: Exception) {}
+            try { http("$url?action=fail&id=$id", key) } catch (_: Exception) {}
             status("⚠ $name " + (if (BtPrinter.isBt(ip)) "(Bluetooth) " else "($ip) ") + getString(R.string.print_failed) + ": " + (BtPrinter.reason(e) ?: e.message ?: ""))
         }
     }
 
-    private fun http(u: String): JSONObject {
+    // The printer key goes in a header (Prime POS 1.7.4+), never in the address: addresses end up in server logs and proxies.
+    private fun http(u: String, key: String): JSONObject {
         val c = URL(u).openConnection() as HttpURLConnection
         c.connectTimeout = 10000; c.readTimeout = 15000
         c.setRequestProperty("User-Agent", "PrimePOSApp/" + BuildConfigHelper.version(this))
+        c.setRequestProperty("X-Print-Key", key)
         try {
             val code = c.responseCode
             val body = (if (code in 200..299) c.inputStream else c.errorStream)?.bufferedReader()?.use { it.readText() } ?: ""
@@ -132,7 +133,6 @@ class PrintService : Service() {
         } finally { c.disconnect() }
     }
 
-    private fun enc(s: String) = URLEncoder.encode(s, "UTF-8")
 
     private fun status(s: String) {
         lastStatus = s
