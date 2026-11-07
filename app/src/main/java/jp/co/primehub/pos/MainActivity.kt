@@ -103,10 +103,13 @@ class MainActivity : AppCompatActivity() {
             override fun onPageFinished(view: WebView, url: String) {
                 val u = Uri.parse(url)
                 if (u.host == HOST && !url.contains("setup.php")) getPreferences(MODE_PRIVATE).edit().putString("last", url).apply()
+                // the POS screen works offline (kept by its service worker): remember it, so the offline page can offer it
+                if (u.host == HOST && (u.path ?: "").matches(Regex("^/s/[^/]+/pos/(index\\.php)?$"))) getPreferences(MODE_PRIVATE).edit().putString("lastPos", "${u.scheme}://${u.host}${u.path}").apply()
                 CookieManager.getInstance().flush()
             }
             override fun onReceivedError(view: WebView, req: WebResourceRequest, err: WebResourceError) {
-                if (req.isForMainFrame) showOffline(req.url.toString())
+                // posted, not called here: some WebView versions draw their own "Webpage not available" page over a load started inside this callback
+                if (req.isForMainFrame) { view.stopLoading(); val failed = req.url.toString(); view.post { showOffline(failed) } }
             }
         }
         web.webChromeClient = object : WebChromeClient() {
@@ -188,11 +191,18 @@ class MainActivity : AppCompatActivity() {
     override fun onPause() { super.onPause(); CookieManager.getInstance().flush(); shown?.cancel() }
 
     private fun showOffline(failed: String) {
+        val pos = getPreferences(MODE_PRIVATE).getString("lastPos", null)
+        val q = { u: String -> u.replace("'", "%27").replace("\"", "%22").replace("<", "%3C") }
+        // the POS keeps working offline (tables, orders, payments are saved on the tablet) — offer it unless it is what just failed
+        val posBtn = if (pos != null && !failed.startsWith(pos)) """<button onclick="location.href='${q(pos)}'" style="display:block;width:100%;margin-top:12px;padding:14px 20px;border:0;border-radius:12px;background:#fff;color:#1d2621;font-size:18px;font-weight:800">🧾 POSをオフラインで開く<br><small style="font-weight:600">Open the POS offline</small></button>""" else ""
         val html = """
             <html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-            <body style="font-family:sans-serif;background:#2a3d33;color:#fff;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center">
-            <div><div style="font-size:54px">📶</div><h2>インターネットに接続できません</h2><p style="opacity:.8">No internet connection</p>
-            <button onclick="location.href='${failed.replace("'", "%27")}'" style="margin-top:18px;padding:14px 28px;border:0;border-radius:12px;background:#b89a5e;color:#1d2621;font-size:18px;font-weight:800">再読み込み Retry</button></div></body></html>
+            <body style="font-family:sans-serif;background:#2a3d33;color:#fff;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;text-align:center;padding:0 20px;box-sizing:border-box">
+            <div style="max-width:420px;width:100%"><div style="font-size:54px">📶</div><h2>インターネットに接続できません</h2><p style="opacity:.8">No internet connection</p>
+            <p style="opacity:.85;font-size:14.5px;line-height:1.6">この画面はインターネットが必要です。POSレジ（テーブル・注文・会計）はオフラインでも使えます。接続が戻ると自動で開き直します。<br>This screen needs the internet. The POS (tables, orders, payments) works offline. It reopens by itself when the connection is back.</p>
+            $posBtn
+            <button onclick="location.href='${q(failed)}'" style="display:block;width:100%;margin-top:12px;padding:14px 20px;border:0;border-radius:12px;background:#b89a5e;color:#1d2621;font-size:18px;font-weight:800">再読み込み Retry</button></div>
+            <script>addEventListener('online', function () { setTimeout(function () { location.href = '${q(failed)}'; }, 1500); });</script></body></html>
         """.trimIndent()
         web.loadDataWithBaseURL(null, html, "text/html", "utf-8", failed)
     }
