@@ -102,7 +102,9 @@ class MainActivity : AppCompatActivity() {
             }
             override fun onPageFinished(view: WebView, url: String) {
                 val u = Uri.parse(url)
-                if (u.host == HOST && !url.contains("setup.php")) getPreferences(MODE_PRIVATE).edit().putString("last", url).apply()
+                // the app reopens on the last staff screen only: a guest page (QR menu, delivery, booking) opened to test a QR code
+                // must never become the start page, or the tablet would be stuck on the guest menu
+                if (u.host == HOST && isStaffPage(u)) getPreferences(MODE_PRIVATE).edit().putString("last", url).apply()
                 // the POS screen works offline (kept by its service worker): remember it, so the offline page can offer it
                 if (u.host == HOST && (u.path ?: "").matches(Regex("^/s/[^/]+/pos/(index\\.php)?$"))) getPreferences(MODE_PRIVATE).edit().putString("lastPos", "${u.scheme}://${u.host}${u.path}").apply()
                 CookieManager.getInstance().flush()
@@ -173,7 +175,7 @@ class MainActivity : AppCompatActivity() {
 
         PrintService.start(this)
         if (savedInstanceState != null) web.restoreState(savedInstanceState)
-        else web.loadUrl(getPreferences(MODE_PRIVATE).getString("last", null) ?: HOME)
+        else web.loadUrl(getPreferences(MODE_PRIVATE).getString("last", null)?.takeIf { isStaffPage(Uri.parse(it)) } ?: HOME)   // an older app may have saved a guest page
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
@@ -189,6 +191,13 @@ class MainActivity : AppCompatActivity() {
     }
     override fun onSaveInstanceState(outState: Bundle) { super.onSaveInstanceState(outState); web.saveState(outState) }
     override fun onPause() { super.onPause(); CookieManager.getInstance().flush(); shown?.cancel() }
+
+    /** POS, kitchen, Admin, My stores and sign-in: the screens a shop tablet should come back to */
+    private fun isStaffPage(u: Uri): Boolean {
+        val p = u.path ?: return false
+        if (u.host != HOST || p.contains("setup.php")) return false
+        return p.matches(Regex("^/s/[^/]+/(pos|kds|staff)(/.*)?$")) || p.startsWith("/app/") || p == "/login.php"
+    }
 
     private fun showOffline(failed: String) {
         val pos = getPreferences(MODE_PRIVATE).getString("lastPos", null)
