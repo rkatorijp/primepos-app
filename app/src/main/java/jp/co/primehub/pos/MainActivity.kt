@@ -24,6 +24,7 @@ import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.EditText
@@ -38,6 +39,7 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import org.json.JSONArray
+import java.io.ByteArrayInputStream
 
 /**
  * Prime POS for Android: the normal Prime POS screens (any store can sign in) plus
@@ -108,6 +110,17 @@ class MainActivity : AppCompatActivity() {
                 // the POS screen works offline (kept by its service worker): remember it, so the offline page can offer it
                 if (u.host == HOST && (u.path ?: "").matches(Regex("^/s/[^/]+/pos/(index\\.php)?$"))) getPreferences(MODE_PRIVATE).edit().putString("lastPos", "${u.scheme}://${u.host}${u.path}").apply()
                 CookieManager.getInstance().flush()
+            }
+            // window.PrimePOSApp is given to every frame of the page, and Android cannot tell which frame calls it.
+            // So inside the app no other website's page may load in a frame (scripts, images and styles from other sites still load).
+            override fun shouldInterceptRequest(view: WebView, req: WebResourceRequest): WebResourceResponse? {
+                val u = req.url
+                if (req.isForMainFrame || u.host == HOST || (u.scheme != "http" && u.scheme != "https")) return null
+                val accept = req.requestHeaders.entries.firstOrNull { it.key.equals("Accept", true) }?.value ?: ""
+                val dest = req.requestHeaders.entries.firstOrNull { it.key.equals("Sec-Fetch-Dest", true) }?.value ?: ""
+                if (dest.equals("iframe", true) || dest.equals("frame", true) || accept.startsWith("text/html", true))
+                    return WebResourceResponse("text/plain", "utf-8", 403, "Blocked", emptyMap(), ByteArrayInputStream(ByteArray(0)))
+                return null
             }
             override fun onReceivedError(view: WebView, req: WebResourceRequest, err: WebResourceError) {
                 // posted, not called here: some WebView versions draw their own "Webpage not available" page over a load started inside this callback
@@ -245,6 +258,17 @@ class MainActivity : AppCompatActivity() {
     /** window.PrimePOSApp in the page (only answers on Prime POS pages) */
     inner class Bridge {
         private fun ok() = pageHost == HOST
+        /** a page may only reach a printer: a paired Bluetooth printer, or a private-network address (10.x, 172.16–31.x, 192.168.x) on a raw
+         *  printing port (9100–9199). Never the internet, the router's admin page or other services on the shop Wi-Fi. */
+        private fun printerOk(ip: String, port: Int): Boolean {
+            if (BtPrinter.isBt(ip)) return true
+            val p = if (port > 0) port else 9100
+            if (p !in 9100..9199) return false
+            val m = Regex("^(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})$").find(ip.trim()) ?: return false
+            val b = m.groupValues.drop(1).map { it.toInt() }
+            if (b.any { it > 255 }) return false
+            return b[0] == 10 || (b[0] == 172 && b[1] in 16..31) || (b[0] == 192 && b[1] == 168)
+        }
 
         @JavascriptInterface fun isApp(): Boolean = true
         @JavascriptInterface fun version(): String = BuildConfigHelper.version(this@MainActivity)
@@ -273,6 +297,7 @@ class MainActivity : AppCompatActivity() {
                 for (i in 0 until arr.length()) {
                     val p = arr.getJSONObject(i)
                     val name = p.optString("name", "Printer")
+                    if (!printerOk(p.optString("ip", ""), p.optInt("port", 9100))) { toast("⚠ $name: プリンターのアドレスではありません · Not a printer address on the shop network"); continue }
                     try {
                         EscPos.send(this@MainActivity, p.getString("ip"), p.optInt("port", 9100), EscPos.render(EscPos.testTicket(name, p.optInt("width", 48)), Prefs.kanji(this@MainActivity)))
                         toast("✓ $name")
@@ -285,6 +310,7 @@ class MainActivity : AppCompatActivity() {
          *  Runs on the WebView bridge thread, so waiting for the printer is fine. Returns "" when printed, otherwise the error. */
         @JavascriptInterface fun printText(ip: String, port: Int, text: String, copies: Int): String {
             if (!ok()) return "not allowed"
+            if (!printerOk(ip, port)) return "プリンターのアドレスではありません · Not a printer address on the shop network"
             return try {
                 EscPos.send(this@MainActivity, ip, port, EscPos.render(text, Prefs.kanji(this@MainActivity)), copies, 4000); ""
             } catch (e: Exception) { printerError(e) }
@@ -339,7 +365,7 @@ class MainActivity : AppCompatActivity() {
 
         /** open the cash drawer on a printer right now */
         @JavascriptInterface fun openDrawer(ip: String, port: Int) {
-            if (!ok()) return
+            if (!ok() || !printerOk(ip, port)) return
             Thread { try { EscPos.send(this@MainActivity, ip, port, EscPos.drawerKick(), 1, 3000) } catch (e: Exception) { toast("⚠ ドロア Drawer: " + printerError(e), quiet = true) } }.start()
         }
     }
