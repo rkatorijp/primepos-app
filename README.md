@@ -30,3 +30,20 @@ Turn off battery optimisation for Prime POS (Settings → Apps → Prime POS →
 GitHub Actions (`.github/workflows/android.yml`) builds a debug APK on every push to `main` and attaches it to the run as the artifact **PrimePOS-debug-apk**.
 
 Local build: Android Studio (JDK 17, SDK 34) → open the folder → Run.
+
+## Google Play Console checklist (before publishing)
+
+- **Foreground service declaration** (App content → Foreground service permissions): the print service uses
+  `FOREGROUND_SERVICE_CONNECTED_DEVICE` to keep printing kitchen tickets to LAN / Bluetooth printers while the tablet screen is off.
+  Play asks for a short description and a video of this (start printing in Admin → Printers, lock the screen, a ticket still prints).
+- **Boot receiver**: `RECEIVE_BOOT_COMPLETED` restarts printing after the tablet restarts — mention it in the same declaration.
+- **Payments**: buying Pro is hidden inside the app (the web pages check `PrimePOSApp` / the `PrimePOSApp/` user agent). Keep every
+  new "buy" or "upgrade" button hidden in the app too, or Play will ask for Google Play Billing.
+- **Camera**: only asked when the scan button on the POS is used, only for pages on pos.primehub.co.jp.
+
+## Bridge safety (1.9.4)
+
+`window.PrimePOSApp` is given to every frame of a page, and Android cannot tell which frame calls it. So:
+- other websites cannot load in a frame inside the app (`shouldInterceptRequest` in `MainActivity.kt`);
+- `printText`, `openDrawer` and `testPrint` only reach a paired Bluetooth printer or a private-network address
+  (10.x, 172.16–31.x, 192.168.x) on a raw printing port 9100–9199. Printing from the server (print key) is not limited.
