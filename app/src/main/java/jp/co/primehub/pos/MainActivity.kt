@@ -95,6 +95,7 @@ class MainActivity : AppCompatActivity() {
         web.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, req: WebResourceRequest): Boolean {
                 val u = req.url
+                if (u.scheme == "primepos" && u.host == "wifi") { openNetworkSettings(); return true }   // offline page: "Wi-Fi settings"
                 if (u.host == HOST || u.scheme == "about" || u.scheme == "data") return false
                 try { startActivity(Intent(Intent.ACTION_VIEW, u)) } catch (_: Exception) {}   // other sites: normal browser
                 return true
@@ -110,6 +111,11 @@ class MainActivity : AppCompatActivity() {
                 // the POS screen works offline (kept by its service worker): remember it, so the offline page can offer it
                 if (u.host == HOST && (u.path ?: "").matches(Regex("^/s/[^/]+/pos/(index\\.php)?$"))) getPreferences(MODE_PRIVATE).edit().putString("lastPos", "${u.scheme}://${u.host}${u.path}").apply()
                 CookieManager.getInstance().flush()
+                // some WebView versions (and pages kept by a service worker) show their own "Webpage not available · net::ERR_FAILED"
+                // without calling onReceivedError: if that page is on screen, replace it with ours
+                if (url.startsWith("http")) view.evaluateJavascript("(function(){var t=document.body?document.body.innerText:'';return /net::ERR_|Webpage not available|ウェブページを表示できません/.test(t)&&!document.querySelector('script[src]');})()") {
+                    if (it == "true") showOffline(url)
+                }
             }
             // window.PrimePOSApp is given to every frame of the page, and Android cannot tell which frame calls it.
             // So inside the app no other website's page may load in a frame (scripts, images and styles from other sites still load).
@@ -212,19 +218,31 @@ class MainActivity : AppCompatActivity() {
         return p.matches(Regex("^/s/[^/]+/(pos|kds|staff)(/.*)?$")) || p.startsWith("/app/") || p == "/login.php"
     }
 
+    private fun openNetworkSettings() {
+        val panel = if (Build.VERSION.SDK_INT >= 29) Intent(android.provider.Settings.Panel.ACTION_INTERNET_CONNECTIVITY) else Intent(android.provider.Settings.ACTION_WIFI_SETTINGS)
+        try { startActivity(panel) } catch (_: Exception) { try { startActivity(Intent(android.provider.Settings.ACTION_WIRELESS_SETTINGS)) } catch (_: Exception) {} }
+    }
+
+    /** No internet: "Check internet connection" with Reconnect (tries again now) and Wi-Fi settings; it also retries by itself when the line is back. */
     private fun showOffline(failed: String) {
         val pos = getPreferences(MODE_PRIVATE).getString("lastPos", null)
         val q = { u: String -> u.replace("'", "%27").replace("\"", "%22").replace("<", "%3C") }
+        val ic = { d: String, size: Int -> """<svg viewBox="0 0 24 24" width="$size" height="$size" aria-hidden="true"><path fill="currentColor" d="$d"/></svg>""" }
+        val btn = "display:flex;align-items:center;justify-content:center;gap:10px;width:100%;margin-top:12px;padding:15px 20px;border:0;border-radius:14px;font-size:18px;font-weight:800"
         // the POS keeps working offline (tables, orders, payments are saved on the tablet) — offer it unless it is what just failed
-        val posBtn = if (pos != null && !failed.startsWith(pos)) """<button onclick="location.href='${q(pos)}'" style="display:block;width:100%;margin-top:12px;padding:14px 20px;border:0;border-radius:12px;background:#fff;color:#1d2621;font-size:18px;font-weight:800">🧾 POSをオフラインで開く<br><small style="font-weight:600">Open the POS offline</small></button>""" else ""
+        val posBtn = if (pos != null && !failed.startsWith(pos)) """<button onclick="location.href='${q(pos)}'" style="$btn;background:#fff;color:#1d2621">${ic("M19.5 3.5 18 2l-1.5 1.5L15 2l-1.5 1.5L12 2l-1.5 1.5L9 2 7.5 3.5 6 2 4.5 3.5 3 2v20l1.5-1.5L6 22l1.5-1.5L9 22l1.5-1.5L12 22l1.5-1.5L15 22l1.5-1.5L18 22l1.5-1.5L21 22V2zM19 19H5V5h14zM6 15h12v2H6m0-6h12v2H6m0-6h12v2H6z", 22)}<span>POSをオフラインで開く<br><small style="font-weight:600">Open the POS offline</small></span></button>""" else ""
         val html = """
             <html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head>
             <body style="font-family:sans-serif;background:#2a3d33;color:#fff;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;text-align:center;padding:0 20px;box-sizing:border-box">
-            <div style="max-width:420px;width:100%"><div style="font-size:54px">📶</div><h2>インターネットに接続できません</h2><p style="opacity:.8">No internet connection</p>
-            <p style="opacity:.85;font-size:14.5px;line-height:1.6">この画面はインターネットが必要です。POSレジ（テーブル・注文・会計）はオフラインでも使えます。接続が戻ると自動で開き直します。<br>This screen needs the internet. The POS (tables, orders, payments) works offline. It reopens by itself when the connection is back.</p>
+            <div style="max-width:420px;width:100%"><div style="color:#b89a5e">${ic("M2.28 3 1 4.27l1.47 1.47c-.43.26-.86.55-1.27.86L3 9c.53-.4 1.08-.75 1.66-1.07l2.23 2.23c-.74.34-1.45.75-2.09 1.24l1.8 2.4c.78-.58 1.66-1.03 2.6-1.33L11.75 15c-1.25.07-2.41.5-3.35 1.2L12 21l2.46-3.27L17.74 21 19 19.72M12 3c-2.15 0-4.2.38-6.1 1.07l2.39 2.4C9.5 6.16 10.72 6 12 6c3.38 0 6.5 1.11 9 3l1.8-2.4C19.79 4.34 16.06 3 12 3m0 6c-.38 0-.75 0-1.12.05l3.19 3.2c1.22.28 2.36.82 3.33 1.55l1.8-2.4C17.2 9.89 14.7 9 12 9", 64)}</div>
+            <h2 style="margin:10px 0 4px">インターネット接続を確認してください</h2><p style="opacity:.85;margin:0 0 12px;font-size:17px">Check your internet connection</p>
+            <p style="opacity:.8;font-size:14.5px;line-height:1.6">Wi-Fiまたはモバイルデータを確認してください。接続が戻ると自動で開き直します。<br>Check Wi-Fi or mobile data. The page reopens by itself when the connection is back.</p>
+            <button id="re" onclick="go()" style="$btn;background:#b89a5e;color:#1d2621">${ic("M17.65 6.35A7.96 7.96 0 0 0 12 4a8 8 0 0 0-8 8 8 8 0 0 0 8 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18a6 6 0 0 1-6-6 6 6 0 0 1 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4z", 22)}再接続 Reconnect</button>
+            <button onclick="location.href='primepos://wifi'" style="$btn;background:transparent;color:#fff;border:1.5px solid rgba(255,255,255,.4)">${ic("M12 12c-2.03 0-3.9.67-5.4 1.8l-1.8-2.4C6.81 9.89 9.3 9 12 9s5.19.89 7.2 2.4l-.46.6c-1.08.05-2.11.33-3.01.81A8.9 8.9 0 0 0 12 12m9-3 1.8-2.4C19.79 4.34 16.05 3 12 3S4.21 4.34 1.2 6.6L3 9c2.5-1.88 5.62-3 9-3s6.5 1.12 9 3m-9 6c-1.35 0-2.6.45-3.6 1.2L12 21l.22-.29a6.9 6.9 0 0 1 .95-5.58c-.38-.08-.77-.13-1.17-.13m11.8 5.4c.1 0 .1.1 0 .2l-1 1.7c-.1.1-.2.1-.3.1l-1.2-.4c-.3.2-.5.3-.8.5l-.2 1.3c0 .1-.1.2-.2.2h-2c-.1 0-.2-.1-.3-.2l-.2-1.3c-.3-.1-.6-.3-.8-.5l-1.2.5c-.1 0-.2 0-.3-.1l-1-1.7c-.1-.1 0-.2.1-.3l1.1-.8v-1l-1.1-.8c-.1-.1-.1-.2-.1-.3l1-1.7c.1-.1.2-.1.3-.1l1.2.5c.3-.2.5-.3.8-.5l.2-1.3c0-.1.1-.2.3-.2h2c.1 0 .2.1.2.2l.2 1.3c.3.1.6.3.9.5l1.2-.5c.1 0 .3 0 .3.1l1 1.7c.1.1 0 .2-.1.3l-1.1.8v1zM20.5 19c0-.8-.7-1.5-1.5-1.5s-1.5.7-1.5 1.5.7 1.5 1.5 1.5 1.5-.7 1.5-1.5", 22)}Wi-Fi設定 Wi-Fi settings</button>
             $posBtn
-            <button onclick="location.href='${q(failed)}'" style="display:block;width:100%;margin-top:12px;padding:14px 20px;border:0;border-radius:12px;background:#b89a5e;color:#1d2621;font-size:18px;font-weight:800">再読み込み Retry</button></div>
-            <script>addEventListener('online', function () { setTimeout(function () { location.href = '${q(failed)}'; }, 1500); });</script></body></html>
+            <p id="st" style="opacity:.7;font-size:13px;margin-top:12px"></p></div>
+            <script>function go(){document.getElementById('st').textContent='接続しています… Connecting…';location.href='${q(failed)}';}
+            addEventListener('online',function(){setTimeout(go,1500);});setInterval(function(){if(navigator.onLine)go();},15000);</script></body></html>
         """.trimIndent()
         web.loadDataWithBaseURL(null, html, "text/html", "utf-8", failed)
     }
